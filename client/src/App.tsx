@@ -15,6 +15,8 @@ import Accounting from "./pages/erp/Accounting";
 import Reports from "./pages/erp/Reports";
 import AuditLog from "./pages/erp/AuditLog";
 import Settings from "./pages/erp/Settings";
+import CMS from "./pages/erp/CMS";
+import Cashier from "./pages/Cashier";
 
 
 function Router() {
@@ -24,12 +26,14 @@ function Router() {
       <Route path={"/"} component={Welcome} />
       <Route path={"/welcome"} component={Welcome} />
       <Route path={"/pos"} component={POS} />
+      <Route path={"/cashier"} component={Cashier} />
       <Route path={"/erp"} component={ERPDashboard} />
       <Route path="/erp/inventory" component={Inventory} />
       <Route path="/erp/hrm" component={HRM} />
       <Route path="/erp/accounting" component={Accounting} />
       <Route path="/erp/reports" component={Reports} />
       <Route path="/erp/audit" component={AuditLog} />
+      <Route path="/erp/cms" component={CMS} />
       <Route path="/erp/settings" component={Settings} />
 
       <Route path={"/home"} component={Home} />

@@ -10,6 +10,7 @@ interface User {
   email: string;
   full_name: string;
   role: string;
+  language: string;
 }
 
 export default function Welcome() {
@@ -18,12 +19,16 @@ export default function Welcome() {
 
   useEffect(() => {
     // No login required, set default user
-    setUser({
+    const defaultUser = {
       id: 'guest',
       email: 'guest@restaurant.com',
       full_name: 'Guest User',
-      role: 'admin'
-    });
+      role: 'admin',
+      language: 'th'
+    };
+    setUser(defaultUser);
+    // Save user to localStorage for POS and other pages
+    localStorage.setItem('user', JSON.stringify(defaultUser));
   }, []);
 
   const handleLogout = () => {

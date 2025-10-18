@@ -1,19 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import POSLayout from "@/components/POSLayout";
+import RealtimeNotifications from "@/components/RealtimeNotifications";
 import { supabase } from "@/lib/supabase";
 import { useEffect, useState } from "react";
-import { useLocation } from "wouter";
 import { toast } from "sonner";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import RealtimeNotifications from "@/components/RealtimeNotifications";
 
 interface User {
   id: string;
@@ -49,26 +46,30 @@ interface CartItem {
 }
 
 export default function POS() {
-  const [, setLocation] = useLocation();
   const [user, setUser] = useState<User | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [language, setLanguage] = useState<'th' | 'en'>('th');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  
+  // Payment fields
+  const [tableNo, setTableNo] = useState('');
+  const [discount, setDiscount] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'credit_card' | 'qr_code'>('cash');
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
-    if (!userData) {
-      setLocation('/');
-      return;
+    if (userData) {
+      const parsedUser = JSON.parse(userData);
+      setUser(parsedUser);
+      setLanguage(parsedUser.language || 'th');
     }
-    const parsedUser = JSON.parse(userData);
-    setUser(parsedUser);
-    setLanguage(parsedUser.language || 'th');
     loadCategories();
-  }, [setLocation]);
+  }, []);
 
   const loadCategories = async () => {
     const { data, error } = await supabase
@@ -136,75 +137,96 @@ export default function POS() {
     ));
   };
 
-  const getTotalAmount = () => {
+  const getSubtotal = () => {
     return cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('user');
-    toast.success('ออกจากระบบสำเร็จ');
-    setLocation('/');
+  const getTax = () => {
+    return getSubtotal() * 0.07; // 7% VAT
+  };
+
+  const getTotal = () => {
+    return getSubtotal() + getTax() - discount;
+  };
+
+  const handleCheckout = () => {
+    if (cart.length === 0) {
+      toast.error('กรุณาเพิ่มสินค้าลงตะกร้า');
+      return;
+    }
+    setIsPaymentOpen(true);
+  };
+
+  const handlePayment = async () => {
+    if (!user) {
+      toast.error('ไม่พบข้อมูลผู้ใช้');
+      return;
+    }
+
+    try {
+      // Create order
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .insert({
+          cashier_id: user.id,
+          order_type: 'dine-in',
+          status: 'pending',
+          subtotal: getSubtotal(),
+          tax_amount: getTax(),
+          discount_amount: discount,
+          total_amount: getTotal(),
+          payment_method: paymentMethod,
+          payment_status: 'paid',
+        })
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+
+      // Create order items
+      const orderItems = cart.map(item => ({
+        order_id: order.id,
+        product_id: item.product.id,
+        quantity: item.quantity,
+        unit_price: item.product.price,
+        total_price: item.product.price * item.quantity,
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert(orderItems);
+
+      if (itemsError) throw itemsError;
+
+      // Update order status
+      await supabase
+        .from('orders')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', order.id);
+
+      toast.success('ชำระเงินสำเร็จ!');
+      
+      // Reset
+      setCart([]);
+      setTableNo('');
+      setDiscount(0);
+      setIsPaymentOpen(false);
+      setIsCartOpen(false);
+      setSelectedCategory(null);
+      setProducts([]);
+    } catch (error) {
+      console.error('Payment error:', error);
+      toast.error('เกิดข้อผิดพลาดในการชำระเงิน');
+    }
   };
 
   const toggleLanguage = () => {
     setLanguage(prev => prev === 'th' ? 'en' : 'th');
   };
 
-  if (!user) {
-    return null;
-  }
-
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-full w-20 bg-gray-800 flex flex-col items-center py-6 space-y-6 border-r border-gray-700">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
-          onClick={() => setLocation('/welcome')}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-          </svg>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="w-12 h-12 rounded-xl hover:bg-gray-700"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="w-12 h-12 rounded-xl hover:bg-gray-700"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-          </svg>
-        </Button>
-
-        <div className="flex-1" />
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="w-12 h-12 rounded-xl hover:bg-gray-700"
-          onClick={handleLogout}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-        </Button>
-      </aside>
-
-      {/* Main Content */}
-      <main className="ml-20 p-8">
+    <POSLayout>
+      <div className="p-8">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -221,6 +243,30 @@ export default function POS() {
             >
               {language === 'th' ? '🇹🇭 ไทย' : '🇬🇧 English'}
             </Button>
+            {!selectedCategory && (
+              <div className="flex gap-2">
+                <Button
+                  variant={viewMode === 'grid' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setViewMode('grid')}
+                  className="bg-gray-800 border-gray-700"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </Button>
+                <Button
+                  variant={viewMode === 'list' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setViewMode('list')}
+                  className="bg-gray-800 border-gray-700"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </Button>
+              </div>
+            )}
             <Button
               onClick={() => setIsCartOpen(true)}
               className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 relative"
@@ -230,7 +276,7 @@ export default function POS() {
               </svg>
               ตะกร้า ({cart.length})
               {cart.length > 0 && (
-                <Badge className="ml-2 bg-red-500">{getTotalAmount().toFixed(2)} ฿</Badge>
+                <Badge className="ml-2 bg-red-500">{getTotal().toFixed(2)} ฿</Badge>
               )}
             </Button>
           </div>
@@ -238,7 +284,7 @@ export default function POS() {
 
         {/* Categories Grid */}
         {!selectedCategory && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          <div className={`grid ${viewMode === 'grid' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-1'} gap-6`}>
             {categories.map((category) => (
               <Card
                 key={category.id}
@@ -246,13 +292,13 @@ export default function POS() {
                 style={{ backgroundColor: category.color || '#3B82F6' }}
                 onClick={() => handleCategoryClick(category.id)}
               >
-                <CardContent className="p-6 text-center h-full flex flex-col justify-between">
-                  <div>
-                    <div className="w-20 h-20 mx-auto mb-4 bg-white/20 rounded-2xl flex items-center justify-center">
-                      <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                      </svg>
-                    </div>
+                <CardContent className={`p-6 ${viewMode === 'list' ? 'flex items-center gap-4' : 'text-center'} h-full`}>
+                  <div className={`${viewMode === 'grid' ? 'w-20 h-20 mx-auto mb-4' : 'w-16 h-16'} bg-white/20 rounded-2xl flex items-center justify-center`}>
+                    <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
                     <h3 className="text-xl font-bold text-white mb-2">
                       {language === 'th' ? category.name_th : category.name_en}
                     </h3>
@@ -260,12 +306,6 @@ export default function POS() {
                       {language === 'th' ? category.description_th : category.description_en}
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    className="mt-4 w-full bg-white/20 hover:bg-white/30 text-white border-white/30"
-                  >
-                    View Items
-                  </Button>
                 </CardContent>
               </Card>
             ))}
@@ -277,7 +317,10 @@ export default function POS() {
           <div>
             <Button
               variant="outline"
-              onClick={() => setSelectedCategory(null)}
+              onClick={() => {
+                setSelectedCategory(null);
+                setProducts([]);
+              }}
               className="mb-6 bg-gray-800 border-gray-700 hover:bg-gray-700"
             >
               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -285,119 +328,250 @@ export default function POS() {
               </svg>
               กลับ
             </Button>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            <div className={`grid ${viewMode === 'grid' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-1'} gap-6`}>
               {products.map((product) => (
                 <Card
                   key={product.id}
                   className="group cursor-pointer overflow-hidden border-2 border-gray-700 hover:border-blue-500 transition-all duration-300 hover:shadow-2xl bg-gray-800"
                   onClick={() => addToCart(product)}
                 >
-                  <CardContent className="p-4">
-                    <div className="w-full h-32 bg-gray-700 rounded-lg mb-3 flex items-center justify-center">
+                  <CardContent className={`p-4 ${viewMode === 'list' ? 'flex items-center gap-4' : ''}`}>
+                    <div className={`${viewMode === 'grid' ? 'w-full h-32 mb-3' : 'w-24 h-24'} bg-gray-700 rounded-lg flex items-center justify-center`}>
                       <svg className="w-16 h-16 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
                     </div>
-                    <h4 className="font-semibold text-white mb-1">
-                      {language === 'th' ? product.name_th : product.name_en}
-                    </h4>
-                    <p className="text-lg font-bold text-blue-400">
-                      ฿{product.price.toFixed(2)}
-                    </p>
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-white mb-1">
+                        {language === 'th' ? product.name_th : product.name_en}
+                      </h4>
+                      <p className="text-2xl font-bold text-blue-400">
+                        ฿{product.price.toFixed(2)}
+                      </p>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
           </div>
         )}
-      </main>
+      </div>
 
       {/* Cart Sheet */}
       <Sheet open={isCartOpen} onOpenChange={setIsCartOpen}>
-        <SheetContent className="w-full sm:max-w-lg bg-gray-800 text-white border-gray-700">
+        <SheetContent side="right" className="w-full sm:w-[500px] bg-gray-800 text-white border-gray-700">
           <SheetHeader>
             <SheetTitle className="text-white">ตะกร้าสินค้า</SheetTitle>
-            <SheetDescription className="text-gray-400">
-              รายการสินค้าที่เลือก
-            </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-200px)] mt-6">
-            {cart.length === 0 ? (
-              <div className="text-center py-12 text-gray-400">
-                <svg className="w-16 h-16 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <p>ตะกร้าว่างเปล่า</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {cart.map((item) => (
-                  <Card key={item.product.id} className="bg-gray-700 border-gray-600">
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <h4 className="font-semibold text-white">
-                          {language === 'th' ? item.product.name_th : item.product.name_en}
-                        </h4>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-red-400 hover:text-red-300 hover:bg-red-900/20"
-                          onClick={() => removeFromCart(item.product.id)}
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </Button>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
+          <div className="flex flex-col h-full pt-6">
+            <ScrollArea className="flex-1 -mx-6 px-6">
+              {cart.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                  <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  <p>ตะกร้าว่างเปล่า</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {cart.map((item) => (
+                    <Card key={item.product.id} className="bg-gray-700 border-gray-600">
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-semibold text-white">
+                            {language === 'th' ? item.product.name_th : item.product.name_en}
+                          </h4>
                           <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8 bg-gray-600 border-gray-500 hover:bg-gray-500"
-                            onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeFromCart(item.product.id)}
+                            className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
                           >
-                            -
-                          </Button>
-                          <span className="w-8 text-center font-semibold">{item.quantity}</span>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8 bg-gray-600 border-gray-500 hover:bg-gray-500"
-                            onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
-                          >
-                            +
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
                           </Button>
                         </div>
-                        <p className="font-bold text-blue-400">
-                          ฿{(item.product.price * item.quantity).toFixed(2)}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                              className="h-8 w-8 p-0 bg-gray-600 border-gray-500 hover:bg-gray-500"
+                            >
+                              -
+                            </Button>
+                            <span className="w-12 text-center font-semibold">{item.quantity}</span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                              className="h-8 w-8 p-0 bg-gray-600 border-gray-500 hover:bg-gray-500"
+                            >
+                              +
+                            </Button>
+                          </div>
+                          <p className="text-lg font-bold text-blue-400">
+                            ฿{(item.product.price * item.quantity).toFixed(2)}
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+
+            {cart.length > 0 && (
+              <div className="border-t border-gray-700 pt-4 mt-4 space-y-3">
+                <div className="flex justify-between text-gray-300">
+                  <span>ยอดรวม</span>
+                  <span>฿{getSubtotal().toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-gray-300">
+                  <span>ภาษี (7%)</span>
+                  <span>฿{getTax().toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xl font-bold text-white">
+                  <span>รวมทั้งหมด</span>
+                  <span>฿{getTotal().toFixed(2)}</span>
+                </div>
+                <Button
+                  onClick={handleCheckout}
+                  className="w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-semibold py-6 text-lg"
+                >
+                  ชำระเงิน
+                </Button>
               </div>
             )}
-          </ScrollArea>
-          {cart.length > 0 && (
-            <div className="absolute bottom-0 left-0 right-0 p-6 bg-gray-800 border-t border-gray-700">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-lg font-semibold">ยอดรวม:</span>
-                <span className="text-2xl font-bold text-blue-400">
-                  ฿{getTotalAmount().toFixed(2)}
-                </span>
-              </div>
-              <Button
-                className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold h-12"
-                onClick={() => toast.success('กำลังดำเนินการชำระเงิน...')}
-              >
-                ชำระเงิน
-              </Button>
-            </div>
-          )}
+          </div>
         </SheetContent>
       </Sheet>
-    </div>
+
+      {/* Payment Sheet */}
+      <Sheet open={isPaymentOpen} onOpenChange={setIsPaymentOpen}>
+        <SheetContent side="right" className="w-full sm:w-[500px] bg-gray-800 text-white border-gray-700">
+          <SheetHeader>
+            <SheetTitle className="text-white">ชำระเงิน</SheetTitle>
+          </SheetHeader>
+          <div className="flex flex-col h-full pt-6">
+            <ScrollArea className="flex-1 -mx-6 px-6">
+              <div className="space-y-6">
+                {/* Table Number */}
+                <div>
+                  <Label htmlFor="table" className="text-white">หมายเลขโต๊ะ</Label>
+                  <Input
+                    id="table"
+                    value={tableNo}
+                    onChange={(e) => setTableNo(e.target.value)}
+                    placeholder="T01"
+                    className="bg-gray-700 border-gray-600 text-white mt-2"
+                  />
+                </div>
+
+                {/* Discount */}
+                <div>
+                  <Label htmlFor="discount" className="text-white">ส่วนลด (฿)</Label>
+                  <Input
+                    id="discount"
+                    type="number"
+                    value={discount}
+                    onChange={(e) => setDiscount(Number(e.target.value))}
+                    placeholder="0"
+                    className="bg-gray-700 border-gray-600 text-white mt-2"
+                  />
+                </div>
+
+                {/* Payment Method */}
+                <div>
+                  <Label className="text-white mb-3 block">วิธีการชำระเงิน</Label>
+                  <Tabs value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as any)}>
+                    <TabsList className="grid w-full grid-cols-3 bg-gray-700">
+                      <TabsTrigger value="cash">เงินสด</TabsTrigger>
+                      <TabsTrigger value="credit_card">บัตร</TabsTrigger>
+                      <TabsTrigger value="qr_code">QR Code</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="cash" className="mt-4">
+                      <Card className="bg-gray-700 border-gray-600">
+                        <CardContent className="p-4 text-center">
+                          <svg className="w-16 h-16 mx-auto mb-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                          </svg>
+                          <p className="text-white">รับชำระด้วยเงินสด</p>
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+                    <TabsContent value="credit_card" className="mt-4">
+                      <Card className="bg-gray-700 border-gray-600">
+                        <CardContent className="p-4 text-center">
+                          <svg className="w-16 h-16 mx-auto mb-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                          </svg>
+                          <p className="text-white">รับชำระด้วยบัตรเครดิต/เดบิต</p>
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+                    <TabsContent value="qr_code" className="mt-4">
+                      <Card className="bg-gray-700 border-gray-600">
+                        <CardContent className="p-4 text-center">
+                          <svg className="w-16 h-16 mx-auto mb-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                          </svg>
+                          <p className="text-white">รับชำระด้วย QR Code</p>
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+                  </Tabs>
+                </div>
+
+                {/* Summary */}
+                <Card className="bg-gray-700 border-gray-600">
+                  <CardContent className="p-4 space-y-2">
+                    <div className="flex justify-between text-gray-300">
+                      <span>ยอดรวม</span>
+                      <span>฿{getSubtotal().toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-300">
+                      <span>ภาษี (7%)</span>
+                      <span>฿{getTax().toFixed(2)}</span>
+                    </div>
+                    {discount > 0 && (
+                      <div className="flex justify-between text-green-400">
+                        <span>ส่วนลด</span>
+                        <span>-฿{discount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="border-t border-gray-600 pt-2 mt-2">
+                      <div className="flex justify-between text-2xl font-bold text-white">
+                        <span>รวมทั้งหมด</span>
+                        <span>฿{getTotal().toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </ScrollArea>
+
+            <div className="border-t border-gray-700 pt-4 mt-4 space-y-3">
+              <Button
+                onClick={handlePayment}
+                className="w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-semibold py-6 text-lg"
+              >
+                ยืนยันการชำระเงิน ฿{getTotal().toFixed(2)}
+              </Button>
+              <Button
+                onClick={() => setIsPaymentOpen(false)}
+                variant="outline"
+                className="w-full bg-gray-700 border-gray-600 hover:bg-gray-600"
+              >
+                ยกเลิก
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </POSLayout>
   );
 }
 
